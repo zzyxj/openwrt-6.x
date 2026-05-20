@@ -10,7 +10,6 @@ env:
   REPO_BRANCH: main-nss
   CONFIG_FILE: .config
   UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -50,13 +49,11 @@ jobs:
     - name: Load custom configuration
       run: |
         cd openwrt
-        # 如果你仓库根目录下有自定义的 .config，会在这里被应用
         [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config || echo "No custom .config found, will use default"
 
     - name: Generate configuration
       run: |
         cd openwrt
-        # 这一步会自动补全缺失的配置，并应用默认针对 IPQ 的 NSS 目标配置
         make defconfig
 
     - name: Compile the firmware
@@ -64,7 +61,6 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 多线程编译，如果报错会自动切换到单线程排查
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -80,14 +76,12 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware to release
-      uses: softprops/action-release@v2
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+    - name: Upload firmware to Artifacts
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        tag_name: OpenWrt_IPQ_${{ github.run_id }}
-        files: ${{ env.FIRMWARE }}/*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: OpenWrt_ZN_M2_Firmware
+        path: ${{ env.FIRMWARE_PATH }}/*
