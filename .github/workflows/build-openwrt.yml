@@ -18,7 +18,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     # 替换原本粗暴的 rm -rf，使用官方社区推荐的清理插件，更彻底且绝对不会卡死
     - name: Free Disk Space (Ubuntu)
