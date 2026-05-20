@@ -7,7 +7,7 @@ on:
 
 env:
   REPO_URL: https://github.com/${{ github.repository }}
-  REPO_BRANCH: main-nss # 如果你的默认分支是 master，请改成 master
+  REPO_BRANCH: main-nss
   CONFIG_FILE: .config
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -38,7 +38,7 @@ jobs:
       working-directory: /workdir
       run: |
         df -h
-        git clone $REPO_URL openwrt
+        git clone -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Update & Install feeds
