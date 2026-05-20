@@ -6,23 +6,24 @@ on:
   workflow_dispatch: # 支持手动点击按钮触发编译
 
 env:
-  REPO_URL: https://github.com/${{ github.repository }}
+  REPO_URL: https://github.com/zzyxj/openwrt-6.x  # 直接锁定上游源码，防止递归克隆
   REPO_BRANCH: main-nss
   CONFIG_FILE: .config
   UPLOAD_FIRMWARE: true
   TZ: Asia/Shanghai
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # 提前适配 GitHub 2026 年新版 Node.js 24 环境
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    # 1. 使用官方稳定 checkout 插件
-    - name: Checkout
+    # 1. 检出你自己的仓库（用于获取里面的 .config 配置文件）
+    - name: Checkout Custom Config
       uses: actions/checkout@v4
 
-    # 【核心修改 1】彻底移除暴力清理磁盘插件，改用安全、温和的系统原生清理，绝对不伤及 Python 和系统核心库
-    - name: Clean Mildly & Set Timezone
+    # 2. 温和地清理 Docker 缓存，确保 88GB 可用空间绝对够用
+    - name: Clean Docker Cache & Set Timezone
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -35,46 +36,46 @@ jobs:
       run: |
         sudo apt-get update
 
-    # 【核心修改 2】极度精准的高通 NSS + OpenWrt 6.x 依赖全家桶，补齐了 lib32stdc++6, python3-setuptools, zstd 等所有硬性预检工具
+    # 3. 安装最完整的高通 NSS + 6.x 内核依赖包
     - name: Install Build Dependencies
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xmlto zlib1g-dev cgroup-tools zstd libzstd-dev lib32stdc++6
 
-    - name: Clean APT Cache
-      run: |
-        sudo apt-get autoremove --purge -y
-        sudo apt-get clean
-
-    # 【核心修改 3】完全废弃可能引发权限黑洞的根目录 /workdir，直接在 GitHub 当前标准无感目录下克隆
+    # 4. 在当前独立目录下克隆 OpenWrt 源码，绝不和根目录发生嵌套冲突
     - name: Clone source code
       run: |
         df -h
-        git clone -b $REPO_BRANCH $REPO_URL openwrt
+        git clone -b $REPO_BRANCH $REPO_URL openwrt_src
+
+    # 5. 核心：把自定义的 .config 移动到源码目录中
+    - name: Load custom configuration
+      run: |
+        if [ -f "$CONFIG_FILE" ]; then
+          cp "$CONFIG_FILE" openwrt_src/.config
+          echo "Successfully loaded custom .config"
+        else
+          echo "No custom .config found, will use default"
+        fi
 
     - name: Update & Install feeds
       run: |
-        cd openwrt
+        cd openwrt_src
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load custom configuration
-      run: |
-        cd openwrt
-        [ -e ../$CONFIG_FILE ] && cp ../$CONFIG_FILE .config || echo "No custom .config found, will use default"
-
-    # 【核心修改 4】生成配置和编译，全程不加 FORCE=1。如果环境还有错，我们要看它报出哪个具体工具找不到，而不是用 FORCE 掩耳盗铃
+    # 6. 生成配置（这里不再使用 FORCE=1，让我们看它能否清白通过）
     - name: Generate configuration
       run: |
-        cd openwrt
+        cd openwrt_src
         make defconfig
 
-    # 【核心修改 5】高通 NSS 编译极度吃内存，稳妥起见限制为 2 线程，如果失败自动降为单线程输出详细日志
+    # 7. 针对高通 NSS 特调的 2 线程编译策略，防止内存溢出
     - name: Compile the firmware
       id: compile
       run: |
-        cd openwrt
+        cd openwrt_src
         echo "Using 2 threads to prevent OOM for Qualcomm NSS build..."
         make -j2 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
@@ -85,13 +86,12 @@ jobs:
         df -h
         free -m
 
-    # 【核心修改 6】加入严谨的防呆判断，只有编译成功且目录存在才去归档，绝不盲目 cd
     - name: Organize files
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        if [ -d "openwrt/bin/targets" ]; then
-          cd openwrt/bin/targets/*/*
+        if [ -d "openwrt_src/bin/targets" ]; then
+          cd openwrt_src/bin/targets/*/*
           rm -rf packages
           echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
