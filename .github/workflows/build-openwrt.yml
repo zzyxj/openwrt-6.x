@@ -54,20 +54,17 @@ jobs:
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
         
-        # 1. 允许系统根据你的 .config 生成基础依赖结构（此时无线组件会被设备模板强制塞回来）
-        make defconfig
+        # 在运行 defconfig 之前，直接追加全局覆盖指令（=n），强行切断设备的默认无线包
+        echo "CONFIG_PACKAGE_wpad-openssl=n" >> .config
+        echo "CONFIG_PACKAGE_wpad-mesh-openssl=n" >> .config
+        echo "CONFIG_PACKAGE_hostapd=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-ath11k=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-ath11k-ahb=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-ath11k-pci=n" >> .config
+        echo "CONFIG_PACKAGE_ath11k-firmware-ipq6018=n" >> .config
+        echo "CONFIG_PACKAGE_ipq-wifi-zn_m2=n" >> .config
         
-        # 2. 强行在生成的最终配置里抹除所有无线核心包与高通 ath11k 驱动
-        sed -i 's/CONFIG_PACKAGE_wpad-openssl=y/# CONFIG_PACKAGE_wpad-openssl is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_wpad-mesh-openssl=y/# CONFIG_PACKAGE_wpad-mesh-openssl is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_hostapd=y/# CONFIG_PACKAGE_hostapd is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_kmod-ath11k=y/# CONFIG_PACKAGE_kmod-ath11k is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_kmod-ath11k-ahb=y/# CONFIG_PACKAGE_kmod-ath11k-ahb is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_kmod-ath11k-pci=y/# CONFIG_PACKAGE_kmod-ath11k-pci is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_ath11k-firmware-ipq6018=y/# CONFIG_PACKAGE_ath11k-firmware-ipq6018 is not set/' .config
-        sed -i 's/CONFIG_PACKAGE_ipq-wifi-zn_m2=y/# CONFIG_PACKAGE_ipq-wifi-zn_m2 is not set/' .config
-        
-        # 3. 再次应用配置，确保相关的次级无线依赖也被连带清理
+        # 只执行一次标准的依赖规范化
         make defconfig
 
     - name: Download package
@@ -84,7 +81,6 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 保持单线程 -j1 配合 V=s，哪怕出了别的新错误也能在日志里看得一清二楚
         make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep 'CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1-\2/' > DEVICE_NAME
