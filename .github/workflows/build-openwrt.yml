@@ -22,7 +22,7 @@ jobs:
     - name: Checkout Custom Config
       uses: actions/checkout@v4
 
-    # 2. 温和地清理 Docker 缓存，确保 88GB 可用空间绝对够用
+    # 2. 清理 Docker 缓存并设置时区
     - name: Clean Docker Cache & Set Timezone
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -36,20 +36,26 @@ jobs:
       run: |
         sudo apt-get update
 
-    # 3. 安装最完整的高通 NSS + 6.x 内核依赖包
+    # 3. 安装完整依赖（补充了 6.x 内核和 NSS 固件容易缺失的 oom、python3-pyelftools、pathspec 等）
     - name: Install Build Dependencies
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xmlto zlib1g-dev cgroup-tools zstd libzstd-dev lib32stdc++6
+        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xmlto zlib1g-dev cgroup-tools zstd libzstd-dev lib32stdc++6 python3-pyelftools
 
-    # 4. 在当前独立目录下克隆 OpenWrt 源码，绝不和根目录发生嵌套冲突
+    # 4. 在当前独立目录下克隆 OpenWrt 源码
     - name: Clone source code
       run: |
         df -h
         git clone -b $REPO_BRANCH $REPO_URL openwrt_src
 
-    # 5. 核心：把自定义的 .config 移动到源码目录中
+    # 5. 【新增修复】解除 Git 安全目录限制，防止 feeds 脚本因目录权限无法读取 git 导致 prereq 失败
+    - name: Fix Git Safe Directory
+      run: |
+        git config --global --add safe.directory /home/runner/work/openwrt-6.x/openwrt-6.x/openwrt_src
+        git config --global --add safe.directory $GITHUB_WORKSPACE/openwrt_src
+
+    # 6. 核心：把自定义的 .config 移动到源码目录中
     - name: Load custom configuration
       run: |
         if [ -f "$CONFIG_FILE" ]; then
@@ -65,13 +71,22 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # 6. 生成配置（这里不再使用 FORCE=1，让我们看它能否清白通过）
+    # 7. 生成配置
     - name: Generate configuration
       run: |
         cd openwrt_src
         make defconfig
 
-    # 7. 针对高通 NSS 特调的 2 线程编译策略，防止内存溢出
+    # 8. 【新增防护】如果环境检查不幸再次失败，自动打印隐藏日志，不让你盲猜
+    - name: Inspect Prerequisite Failure Log
+      if: failure()
+      run: |
+        if [ -f "openwrt_src/staging_dir/host/.prereq-build" ]; then
+          echo "=== 预检查失败日志如下 ==="
+          cat openwrt_src/staging_dir/host/.prereq-build
+        fi
+
+    # 9. 针对高通 NSS 特调的 2 线程编译策略
     - name: Compile the firmware
       id: compile
       run: |
