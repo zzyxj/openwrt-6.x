@@ -48,23 +48,46 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: Run DIY Script (Remove Wireless from Source)
+      run: |
+        # 远程获取并运行 tangyl2000 的开源 DIY 脚本，从源码层干掉无线，确保编译绝不卡死
+        curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-libwrt.sh > diy.sh
+        chmod +x diy.sh
+        ./diy.sh openwrt
+
     - name: Load custom configuration
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        
+        # 1. 抓取无无线、无 USB 的经典兆能 M2 基础配置文件
+        curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-config-20260224 > openwrt/.config
+        
+        # 2. 精准拔掉不需要的集客 AC 控制器和 IPTV 组播转单播工具
+        sed -i 's/CONFIG_PACKAGE_gecoosac=y/# CONFIG_PACKAGE_gecoosac is not set/' openwrt/.config
+        sed -i 's/CONFIG_PACKAGE_rtp2httpd=y/# CONFIG_PACKAGE_rtp2httpd is not set/' openwrt/.config
+        
+        # 3. 强行追加注入你指定的 Nikki、Passwall、ttyd、htop 以及 Argon 主题和全套汉化包
+        cat <<EOF >> openwrt/.config
+
+        # 核心有线网络代理（256M 内存神机黄金搭档）
+        CONFIG_PACKAGE_luci-app-nikki=y
+        CONFIG_PACKAGE_luci-app-passwall=y
+        CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+
+        # 系统管理与网页终端工具
+        CONFIG_PACKAGE_ttyd=y
+        CONFIG_PACKAGE_luci-app-ttyd=y
+        CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
+        CONFIG_PACKAGE_htop=y
+
+        # Argon 暗黑高颜值主题
+        CONFIG_PACKAGE_luci-theme-argon=y
+        CONFIG_PACKAGE_luci-app-argon-config=y
+        CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+EOF
+
         cd openwrt
-        
-        # 在运行 defconfig 之前，直接追加全局覆盖指令（=n），强行切断设备的默认无线包
-        echo "CONFIG_PACKAGE_wpad-openssl=n" >> .config
-        echo "CONFIG_PACKAGE_wpad-mesh-openssl=n" >> .config
-        echo "CONFIG_PACKAGE_hostapd=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-ath11k=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-ath11k-ahb=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-ath11k-pci=n" >> .config
-        echo "CONFIG_PACKAGE_ath11k-firmware-ipq6018=n" >> .config
-        echo "CONFIG_PACKAGE_ipq-wifi-zn_m2=n" >> .config
-        
-        # 只执行一次标准的依赖规范化
+        # 4. 让系统顺着你给的高标准要求去自动生成最终配置，彻底告别语法报错
         make defconfig
 
     - name: Download package
@@ -81,6 +104,7 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
+        # 使用单线程带有 V=s 编译，出了任何玄学问题都能在日志看懂（如果一切顺利，第一次编完后可以改回多线程 -j$(nproc) 加速）
         make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep 'CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1-\2/' > DEVICE_NAME
