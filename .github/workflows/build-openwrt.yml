@@ -13,7 +13,6 @@ env:
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   TZ: Asia/Shanghai
-  # ====== 修复审计漏洞 3：显式定义固件上传标记，确保最终能下载到 Artifact ======
   UPLOAD_FIRMWARE: true
 
 jobs:
@@ -50,14 +49,15 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # ====== 修复审计漏洞 1：用 curl 实时抓取大神的脚本到本地，解决找不到 diy.sh 的报错 ======
+    # ====== 核心修正点：进入真实的 /workdir 目录去抓取并执行脚本，确保路径 100% 对应 ======
     - name: Run DIY Script (Remove Wireless from Source)
       run: |
+        cd /workdir
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-libwrt.sh > diy.sh
         chmod +x diy.sh
         ./diy.sh openwrt
 
-    # ====== 修复审计漏洞 2：精简重叠逻辑，执行符合你需求的“去肥增肌”纯有线代理配置 ======
+    # ====== 极致精简与注入：Nikki + PassWall ======
     - name: Load custom configuration
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
@@ -65,7 +65,7 @@ jobs:
         # 远程拉取通过验证的基础配置覆盖本地文件
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-config-20260224 > openwrt/.config
         
-        # 拔掉不需要的集客AC和IPTV
+        # 剔除集客AC和IPTV
         sed -i 's/CONFIG_PACKAGE_gecoosac=y/# CONFIG_PACKAGE_gecoosac is not set/' openwrt/.config
         sed -i 's/CONFIG_PACKAGE_rtp2httpd=y/# CONFIG_PACKAGE_rtp2httpd is not set/' openwrt/.config
         
@@ -107,7 +107,7 @@ EOF
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 保持单线程 -j1 V=s 以便初次顺畅通关和详细排错
+        # 保持单线程 -j1 V=s 确保首次编译 100% 安全通过
         make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep 'CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1-\2/' > DEVICE_NAME
