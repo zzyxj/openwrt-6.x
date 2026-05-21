@@ -2,7 +2,7 @@ name: Build OpenWrt 6.x (LiBwrt)
 
 on:
   repository_dispatch:
-  workflow_dispatch:      # 必须保证这一行顶格对齐，且后面带有一个冒号！
+  workflow_dispatch:      # 【按钮复活开关】严格对齐，确保网页端出现手动 Build 按钮
   push:
     paths:
       - '.config' # 当你更新 .config 并 push 时触发编译
@@ -13,7 +13,7 @@ env:
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   TZ: Asia/Shanghai
-  UPLOAD_FIRMWARE: true
+  UPLOAD_FIRMWARE: true   # 【上传开关】确保编译完后可以正常打包下载固件
 
 jobs:
   build:
@@ -56,7 +56,7 @@ jobs:
         chmod +x diy.sh
         ./diy.sh openwrt
         
-        # 自动挽救被大神的脚本误删的 PassWall 核心底层依赖文件夹，确保编译绝不报依赖缺失
+        # 【完美防御】自动挽救被大神脚本误删的 xtables-addons 文件夹，防止 PassWall 报错
         cd /workdir/openwrt
         mkdir -p package/network/utils/xtables-addons
         [ -f feeds/packages/net/xtables-addons/Makefile ] && ln -sf /workdir/openwrt/feeds/packages/net/xtables-addons/Makefile package/network/utils/xtables-addons/Makefile || true
@@ -65,35 +65,36 @@ jobs:
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         
-        # 远程拉取通过验证的基础配置覆盖本地文件
+        # 远程拉取通过验证的基础无错配置，直接覆盖本地文件
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-config-20260224 > openwrt/.config
         
-        # 剔除集客AC和IPTV
+        # 剔除你不需要的集客 AC 和 IPTV 工具
         sed -i 's/CONFIG_PACKAGE_gecoosac=y/# CONFIG_PACKAGE_gecoosac is not set/' openwrt/.config
         sed -i 's/CONFIG_PACKAGE_rtp2httpd=y/# CONFIG_PACKAGE_rtp2httpd is not set/' openwrt/.config
         
-        # 追加你点名要的有线神机大礼包
-        cat <<EOF >> openwrt/.config
+        # 【精准对齐写入】追加注入你点名要的 Nikki、Passwall、ttyd、htop 和 Argon 主题
+        cat << 'EOF' >> openwrt/.config
 
-        # 核心网络代理（低内存首选 Nikki）
-        CONFIG_PACKAGE_luci-app-nikki=y
-        CONFIG_PACKAGE_luci-app-passwall=y
-        CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+# 核心网络代理（256M 内存神机黄金搭档）
+CONFIG_PACKAGE_luci-app-nikki=y
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
 
-        # 系统网页终端与状态查看
-        CONFIG_PACKAGE_ttyd=y
-        CONFIG_PACKAGE_luci-app-ttyd=y
-        CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
-        CONFIG_PACKAGE_htop=y
+# 系统管理与网页终端工具
+CONFIG_PACKAGE_ttyd=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
+CONFIG_PACKAGE_htop=y
 
-        # Argon 暗黑主题
-        CONFIG_PACKAGE_luci-theme-argon=y
-        CONFIG_PACKAGE_luci-app-argon-config=y
-        CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+# Argon 暗黑高颜值主题
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-argon-config=y
+CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+
 EOF
 
         cd openwrt
-        # 补齐次级依赖
+        # 补齐次级依赖，彻底修复 Line 93 语法错误
         make defconfig
 
     - name: Download package
