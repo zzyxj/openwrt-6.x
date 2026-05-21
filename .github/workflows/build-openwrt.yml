@@ -2,7 +2,7 @@ name: Build OpenWrt 6.x (LiBwrt)
 
 on:
   repository_dispatch:
-  workflow_dispatch:
+  workflow_dispatch:      # 必须保证这一行顶格对齐，且后面带有一个冒号！
   push:
     paths:
       - '.config' # 当你更新 .config 并 push 时触发编译
