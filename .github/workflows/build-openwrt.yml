@@ -1,172 +1,101 @@
-name: Build OpenWrt for IPQ60XX/807X
+name: Build OpenWrt 6.x (LiBwrt)
 
 on:
   repository_dispatch:
-    types: [build]
-  workflow_dispatch: # 支持手动点击按钮触发编译
+  workflow_dispatch:
+  push:
+    paths:
+      - '.config' # 当你更新 .config 并 push 时触发编译
 
 env:
-  REPO_URL: https://github.com/zzyxj/openwrt-6.x  # 直接锁定上游源码，防止递归克隆
+  REPO_URL: https://github.com/LiBwrt-op/openwrt-6.x.git
   REPO_BRANCH: main-nss
+  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
-  UPLOAD_FIRMWARE: true
   TZ: Asia/Shanghai
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # 提前适配 GitHub 2026 年新版 Node.js 24 环境
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    # 1. 检出你自己的仓库（用于获取里面的 .config 配置文件）
-    - name: Checkout Custom Config
+    - name: Checkout
       uses: actions/checkout@v4
 
-    # 2. 清理 Docker 缓存并设置时区
-    - name: Clean Docker Cache & Set Timezone
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo docker image prune -a -f
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /crypto /usr/local/.ghcup
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-pyelftools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip vim wget xmlto xz-utils zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-    - name: Update APT Packages
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo apt-get update
-
-    # 3. 安装完整依赖
-    - name: Install Build Dependencies
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xmlto zlib1g-dev cgroup-tools zstd libzstd-dev lib32stdc++6 python3-pyelftools
-
-    # 4. 克隆 OpenWrt 源码并配置 Git 全局信息
     - name: Clone source code
+      working-directory: /workdir
       run: |
-        df -h
-        git clone -b $REPO_BRANCH $REPO_URL openwrt_src
-        cd openwrt_src
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
+        df -hT
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    # 5. 解除 Git 安全目录限制
-    - name: Fix Git Safe Directory
-      run: |
-        git config --global --add safe.directory /home/runner/work/openwrt-6.x/openwrt-6.x/openwrt_src
-        git config --global --add safe.directory $GITHUB_WORKSPACE/openwrt_src
-
-    # 6. 核心：把自定义的 .config 移动到源码目录中
-    - name: Load custom configuration
-      run: |
-        if [ -f "$CONFIG_FILE" ]; then
-          cp "$CONFIG_FILE" openwrt_src/.config
-          echo "Successfully loaded custom .config"
-        else
-          echo "No custom .config found, will use default"
-        fi
-
-    # 7. 强力更新并安装 Feeds（带重试机制）
     - name: Update & Install feeds
       run: |
-        cd openwrt_src
-        rm -rf feeds feeds.conf.default.index
-        
-        echo "=== 开始拉取 Feeds 源码（带失败重试） ==="
-        for i in {1..3}; do ./scripts/feeds update -a && break || sleep 5; done
-        
-        echo "=== 开始安装 Feeds 软件包 ==="
+        cd openwrt
+        ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # 8. 【完美闭环】先执行基础合并，再利用原厂工具进行高通 NSS 特调精简
-    - name: Apply IPQ60xx Custom Config Patches
+    - name: Load custom configuration
       run: |
-        cd openwrt_src
-        
-        echo "=== 步骤 8.1: 基础配置预对齐 ==="
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        cd openwrt
         make defconfig
-        
-        echo "=== 步骤 8.2: 使用原厂配置工具精准剔除无线和加密组件 ==="
-        chmod +x scripts/config
 
-        # 1. 关闭无线加密和认证组件
-        ./scripts/config --disable CONFIG_PACKAGE_wpad-openssl
-        ./scripts/config --disable CONFIG_PACKAGE_hostapd
-
-        # 2. 关闭高通 IPQ60xx 的无线驱动
-        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k
-        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k-ahb
-        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k-pci
-
-        # 3. 关闭无线固件和 NSS 无线加速
-        ./scripts/config --disable CONFIG_PACKAGE_ath11k-firmware-ipq6018
-        ./scripts/config --disable CONFIG_PACKAGE_ipq-wifi-zn_m2
-        ./scripts/config --disable CONFIG_PACKAGE_kmod-qca-nss-drv-wifi-meshmgr
-        
-        # 4. 彻底出厂关闭防火墙和网络的软硬 Offloading，注入 uci-defaults
-        mkdir -p files/etc/uci-defaults
-        cat << 'EOF' > files/etc/uci-defaults/99-disable-offloading
-        #!/bin/sh
-        uci set network.@device[0].packet_steering=0
-        uci set network.@device[0].flow_offloading=0
-        uci set network.@device[0].flow_offloading_hw=0
-        uci commit network
-        exit 0
-        EOF
-        chmod +x files/etc/uci-defaults/99-disable-offloading
-        
-        echo "=== 步骤 8.3: 最终配置锁定 ==="
-        make defconfig
-        echo "=== 配置安全定制全面完成 ==="
-
-    # 9. 容错排查
-    - name: Inspect Prerequisite Failure Log
-      if: failure()
+    - name: Download package
+      id: package
       run: |
-        echo "=================================================="
-        echo "=== 警告：流程中发生错误！正在排查最后的死因... ==="
-        echo "=================================================="
-        if [ -f "openwrt_src/staging_dir/host/.prereq-build" ]; then
-          cat openwrt_src/staging_dir/host/.prereq-build
-        else
-          echo "提示：未生成系统级构建错误日志，请向上查看各个步骤的 Shell 输出。"
-        fi
-        exit 1
+        cd openwrt
+        make download -j8
+        find -name "*.tar.gz" -o -name "*.tar.xz" -o -name "*.tgz" | xargs -n 1 -P 4 wget -nv -c || true
+        find package -name Makefile | xargs sed -i 's/https:\/\/sources.openwrt.org/http:\/\/sources.openwrt.org/g' || true
+        make download -j8
 
-    # 10. 针对高通 NSS 特调的 2 线程编译策略
     - name: Compile the firmware
       id: compile
       run: |
-        cd openwrt_src
-        echo "Using 2 threads to prevent OOM for Qualcomm NSS build..."
-        make -j2 || make -j1 V=s
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        # 建议首次编译或 NSS 编译使用单线程（-j1）以保证 100% 成功率并方便排错。如果你极具信心，可以改为 -j$(nproc)
+        make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+        grep 'CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1-\2/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Check space usage
       if: (!cancelled())
       run: |
-        df -h
-        free -m
+        df -hT
+        echo "::group::Compiler space usage"
+        du -h --max-depth=1 /workdir/openwrt | sort -hr || true
+        echo "::endgroup::"
 
     - name: Organize files
       id: organize
-      if: steps.compile.outputs.status == 'success' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' || steps.compile.outputs.status == 'success'
       run: |
-        if [ -d "openwrt_src/bin/targets" ]; then
-          cd openwrt_src/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
-        else
-          echo "Error: Target directory does not exist!"
-          exit 1
-        fi
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware to Artifacts
+    - name: Upload firmware directory
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_ZN_M2_Firmware
-        path: ${{ env.FIRMWARE_PATH }}/*
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
