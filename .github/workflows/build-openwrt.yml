@@ -68,35 +68,6 @@ jobs:
           echo "No custom .config found, will use default"
         fi
 
-    # 6.5【正确切入】执行针对高通 ZN_M2 / IPQ 平台的无线与加密组件剔除脚本
-    - name: Apply IPQ60xx Custom Config Patches
-      run: |
-        cd openwrt_src
-        echo "=== 开始执行无线与加密组件剔除脚本 ==="
-        
-        # 1. 彻底关闭无线加密和认证组件（解决 hostapd / wpad 编译报错）
-        sed -i 's/CONFIG_DEFAULT_wpad-openssl=y/CONFIG_DEFAULT_wpad-openssl=n/' .config
-        echo "CONFIG_PACKAGE_wpad-openssl=n" >> .config
-        echo "CONFIG_PACKAGE_hostapd=n" >> .config
-
-        # 2. 关闭高通 IPQ60xx 的无线驱动（kmod-ath11k 等）
-        sed -i 's/CONFIG_DEFAULT_kmod-ath11k=y/CONFIG_DEFAULT_kmod-ath11k=n/' .config
-        sed -i 's/CONFIG_DEFAULT_kmod-ath11k-ahb=y/CONFIG_DEFAULT_kmod-ath11k-ahb=n/' .config
-        sed -i 's/CONFIG_DEFAULT_kmod-ath11k-pci=y/CONFIG_DEFAULT_kmod-ath11k-pci=n/' .config
-        echo "CONFIG_PACKAGE_kmod-ath11k=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-ath11k-ahb=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-ath11k-pci=n" >> .config
-
-        # 3. 关闭无线固件和 NSS 相关的无线加速（节省空间）
-        sed -i 's/CONFIG_DEFAULT_ath11k-firmware-ipq6018=y/CONFIG_DEFAULT_ath11k-firmware-ipq6018=n/' .config
-        sed -i 's/CONFIG_DEFAULT_ipq-wifi-zn_m2=y/CONFIG_DEFAULT_ipq-wifi-zn_m2=n/' .config
-        sed -i 's/CONFIG_DEFAULT_kmod-qca-nss-drv-wifi-meshmgr=y/CONFIG_DEFAULT_kmod-qca-nss-drv-wifi-meshmgr=n/' .config
-        echo "CONFIG_PACKAGE_ath11k-firmware-ipq6018=n" >> .config
-        echo "CONFIG_PACKAGE_ipq-wifi-zn_m2=n" >> .config
-        echo "CONFIG_PACKAGE_kmod-qca-nss-drv-wifi-meshmgr=n" >> .config
-        
-        echo "=== 脚本修改完成 ==="
-
     # 7. 强力更新并安装 Feeds（带重试机制）
     - name: Update & Install feeds
       run: |
@@ -109,25 +80,58 @@ jobs:
         echo "=== 开始安装 Feeds 软件包 ==="
         ./scripts/feeds install -a
 
-    # 8. 生成配置
-    - name: Generate configuration
-      id: defconfig
+    # 8. 【完美闭环】先执行基础合并，再利用原厂工具进行高通 NSS 特调精简
+    - name: Apply IPQ60xx Custom Config Patches
       run: |
         cd openwrt_src
+        
+        echo "=== 步骤 8.1: 基础配置预对齐 ==="
         make defconfig
+        
+        echo "=== 步骤 8.2: 使用原厂配置工具精准剔除无线和加密组件 ==="
+        chmod +x scripts/config
 
-    # 9. 容错排查：如果环境检查不幸失败，强行拉取真正的标准错误输出
+        # 1. 关闭无线加密和认证组件
+        ./scripts/config --disable CONFIG_PACKAGE_wpad-openssl
+        ./scripts/config --disable CONFIG_PACKAGE_hostapd
+
+        # 2. 关闭高通 IPQ60xx 的无线驱动
+        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k
+        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k-ahb
+        ./scripts/config --disable CONFIG_PACKAGE_kmod-ath11k-pci
+
+        # 3. 关闭无线固件和 NSS 无线加速
+        ./scripts/config --disable CONFIG_PACKAGE_ath11k-firmware-ipq6018
+        ./scripts/config --disable CONFIG_PACKAGE_ipq-wifi-zn_m2
+        ./scripts/config --disable CONFIG_PACKAGE_kmod-qca-nss-drv-wifi-meshmgr
+        
+        # 4. 彻底出厂关闭防火墙和网络的软硬 Offloading，注入 uci-defaults
+        mkdir -p files/etc/uci-defaults
+        cat << 'EOF' > files/etc/uci-defaults/99-disable-offloading
+        #!/bin/sh
+        uci set network.@device[0].packet_steering=0
+        uci set network.@device[0].flow_offloading=0
+        uci set network.@device[0].flow_offloading_hw=0
+        uci commit network
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-disable-offloading
+        
+        echo "=== 步骤 8.3: 最终配置锁定 ==="
+        make defconfig
+        echo "=== 配置安全定制全面完成 ==="
+
+    # 9. 容错排查
     - name: Inspect Prerequisite Failure Log
-      if: failure() && steps.defconfig.outcome == 'failure'
+      if: failure()
       run: |
         echo "=================================================="
-        echo "=== 警告：defconfig 失败！正在排查最后的死因... ==="
+        echo "=== 警告：流程中发生错误！正在排查最后的死因... ==="
         echo "=================================================="
         if [ -f "openwrt_src/staging_dir/host/.prereq-build" ]; then
           cat openwrt_src/staging_dir/host/.prereq-build
         else
-          echo "提示：错误依然发生在 feeds 验证或配置解析冲突阶段，未能生成环境日志。"
-          echo "请向上滚动日志，仔细查看第 7 步和第 8 步的完整报错输出。"
+          echo "提示：未生成系统级构建错误日志，请向上查看各个步骤的 Shell 输出。"
         fi
         exit 1
 
