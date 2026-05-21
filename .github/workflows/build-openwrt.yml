@@ -13,6 +13,8 @@ env:
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   TZ: Asia/Shanghai
+  # ====== 修复审计漏洞 3：显式定义固件上传标记，确保最终能下载到 Artifact ======
+  UPLOAD_FIRMWARE: true
 
 jobs:
   build:
@@ -48,47 +50,47 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # ====== 核心核对点 1：在这里自动抓取并运行他的 sh 脚本，从源码层干掉无线驱动 ======
+    # ====== 修复审计漏洞 1：用 curl 实时抓取大神的脚本到本地，解决找不到 diy.sh 的报错 ======
     - name: Run DIY Script (Remove Wireless from Source)
       run: |
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-libwrt.sh > diy.sh
         chmod +x diy.sh
         ./diy.sh openwrt
 
-    # ====== 核心核对点 2：完美的“去肥增肌”配置加载逻辑 ======
+    # ====== 修复审计漏洞 2：精简重叠逻辑，执行符合你需求的“去肥增肌”纯有线代理配置 ======
     - name: Load custom configuration
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         
-        # 1. 放弃你原本报错的本地 .config，直接拉取大神通过云端验证的兆能 M2 基础配置
+        # 远程拉取通过验证的基础配置覆盖本地文件
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-config-20260224 > openwrt/.config
         
-        # 2. 精准剔除你不需要的集客 AC 和 IPTV 工具
+        # 拔掉不需要的集客AC和IPTV
         sed -i 's/CONFIG_PACKAGE_gecoosac=y/# CONFIG_PACKAGE_gecoosac is not set/' openwrt/.config
         sed -i 's/CONFIG_PACKAGE_rtp2httpd=y/# CONFIG_PACKAGE_rtp2httpd is not set/' openwrt/.config
         
-        # 3. 稳健地在文件尾部注入你点名要的 Nikki、Passwall、ttyd、htop 以及 Argon 主题汉化包
+        # 追加你点名要的有线神机大礼包
         cat <<EOF >> openwrt/.config
 
-        # 核心代理（低内存黄金搭档）
+        # 核心网络代理（低内存首选 Nikki）
         CONFIG_PACKAGE_luci-app-nikki=y
         CONFIG_PACKAGE_luci-app-passwall=y
         CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
 
-        # 系统实用工具
+        # 系统网页终端与状态查看
         CONFIG_PACKAGE_ttyd=y
         CONFIG_PACKAGE_luci-app-ttyd=y
         CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
         CONFIG_PACKAGE_htop=y
 
-        # Argon 炫酷主题
+        # Argon 暗黑主题
         CONFIG_PACKAGE_luci-theme-argon=y
         CONFIG_PACKAGE_luci-app-argon-config=y
         CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
 EOF
 
         cd openwrt
-        # 4. 顺理成章执行一次标准的依赖规范化，绝不会再卡死在第 2000 多行
+        # 补齐次级依赖
         make defconfig
 
     - name: Download package
@@ -105,7 +107,7 @@ EOF
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 保持单线程方便排错，首次成功后可以改成 make -j$(nproc) V=s
+        # 保持单线程 -j1 V=s 以便初次顺畅通关和详细排错
         make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep 'CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/CONFIG_TARGET_(.*)_DEVICE_(.*)=y/\1-\2/' > DEVICE_NAME
