@@ -43,13 +43,16 @@ jobs:
       run: |
         sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xmlto zlib1g-dev cgroup-tools zstd libzstd-dev lib32stdc++6 python3-pyelftools
 
-    # 4. 在当前独立目录下克隆 OpenWrt 源码
+    # 4. 在当前独立目录下克隆 OpenWrt 源码并配置 Git 全局信息
     - name: Clone source code
       run: |
         df -h
         git clone -b $REPO_BRANCH $REPO_URL openwrt_src
+        cd openwrt_src
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
 
-    # 5. 【新增修复】解除 Git 安全目录限制，防止 feeds 脚本因目录权限无法读取 git 导致 prereq 失败
+    # 5. 解除 Git 安全目录限制，防止 feeds 脚本因目录权限无法读取 git 导致 prereq 失败
     - name: Fix Git Safe Directory
       run: |
         git config --global --add safe.directory /home/runner/work/openwrt-6.x/openwrt-6.x/openwrt_src
@@ -71,20 +74,26 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # 7. 生成配置
+    # 7. 生成配置（即使失败也允许继续，以便让第 8 步抓取错误日志）
     - name: Generate configuration
+      id: defconfig
       run: |
         cd openwrt_src
         make defconfig
 
-    # 8. 【新增防护】如果环境检查不幸再次失败，自动打印隐藏日志，不让你盲猜
+    # 8. 核心抓贼现场：一旦 defconfig 失败，强行读取并打印隐藏日志，然后主动退出
     - name: Inspect Prerequisite Failure Log
-      if: failure()
+      if: failure() && steps.defconfig.outcome == 'failure'
       run: |
+        echo "=================================================="
+        echo "=== 警告：预检查失败！正在从底层拉取真正原因... ==="
+        echo "=================================================="
         if [ -f "openwrt_src/staging_dir/host/.prereq-build" ]; then
-          echo "=== 预检查失败日志如下 ==="
           cat openwrt_src/staging_dir/host/.prereq-build
+        else
+          echo "未找到 .prereq-build 文件，请检查上一步的完整标准输出。"
         fi
+        exit 1
 
     # 9. 针对高通 NSS 特调的 2 线程编译策略
     - name: Compile the firmware
