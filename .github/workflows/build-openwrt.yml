@@ -49,15 +49,18 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    # ====== 核心修正点：进入真实的 /workdir 目录去抓取并执行脚本，确保路径 100% 对应 ======
     - name: Run DIY Script (Remove Wireless from Source)
       run: |
         cd /workdir
         curl -sSL https://raw.githubusercontent.com/tangyl2000/zn-m2/main/zn-m2-libwrt.sh > diy.sh
         chmod +x diy.sh
         ./diy.sh openwrt
+        
+        # 自动挽救被大神的脚本误删的 PassWall 核心底层依赖文件夹，确保编译绝不报依赖缺失
+        cd /workdir/openwrt
+        mkdir -p package/network/utils/xtables-addons
+        [ -f feeds/packages/net/xtables-addons/Makefile ] && ln -sf /workdir/openwrt/feeds/packages/net/xtables-addons/Makefile package/network/utils/xtables-addons/Makefile || true
 
-    # ====== 极致精简与注入：Nikki + PassWall ======
     - name: Load custom configuration
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
