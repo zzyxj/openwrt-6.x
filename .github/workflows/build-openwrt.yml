@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    # 1. 检出你自己的仓库
+    # 1. 检出你自己的仓库（用于获取里面的 .config 配置文件）
     - name: Checkout Custom Config
       uses: actions/checkout@v4
 
@@ -36,7 +36,7 @@ jobs:
       run: |
         sudo apt-get update
 
-    # 3. 安装完整依赖（针对 feeds 索引缺失，特别补齐了 python3-core/distutils 等）
+    # 3. 安装完整依赖
     - name: Install Build Dependencies
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -68,7 +68,36 @@ jobs:
           echo "No custom .config found, will use default"
         fi
 
-    # 7. 强力更新并安装 Feeds（带 3 次重试机制，彻底击碎 index missing 隐患）
+    # 6.5【正确切入】执行针对高通 ZN_M2 / IPQ 平台的无线与加密组件剔除脚本
+    - name: Apply IPQ60xx Custom Config Patches
+      run: |
+        cd openwrt_src
+        echo "=== 开始执行无线与加密组件剔除脚本 ==="
+        
+        # 1. 彻底关闭无线加密和认证组件（解决 hostapd / wpad 编译报错）
+        sed -i 's/CONFIG_DEFAULT_wpad-openssl=y/CONFIG_DEFAULT_wpad-openssl=n/' .config
+        echo "CONFIG_PACKAGE_wpad-openssl=n" >> .config
+        echo "CONFIG_PACKAGE_hostapd=n" >> .config
+
+        # 2. 关闭高通 IPQ60xx 的无线驱动（kmod-ath11k 等）
+        sed -i 's/CONFIG_DEFAULT_kmod-ath11k=y/CONFIG_DEFAULT_kmod-ath11k=n/' .config
+        sed -i 's/CONFIG_DEFAULT_kmod-ath11k-ahb=y/CONFIG_DEFAULT_kmod-ath11k-ahb=n/' .config
+        sed -i 's/CONFIG_DEFAULT_kmod-ath11k-pci=y/CONFIG_DEFAULT_kmod-ath11k-pci=n/' .config
+        echo "CONFIG_PACKAGE_kmod-ath11k=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-ath11k-ahb=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-ath11k-pci=n" >> .config
+
+        # 3. 关闭无线固件和 NSS 相关的无线加速（节省空间）
+        sed -i 's/CONFIG_DEFAULT_ath11k-firmware-ipq6018=y/CONFIG_DEFAULT_ath11k-firmware-ipq6018=n/' .config
+        sed -i 's/CONFIG_DEFAULT_ipq-wifi-zn_m2=y/CONFIG_DEFAULT_ipq-wifi-zn_m2=n/' .config
+        sed -i 's/CONFIG_DEFAULT_kmod-qca-nss-drv-wifi-meshmgr=y/CONFIG_DEFAULT_kmod-qca-nss-drv-wifi-meshmgr=n/' .config
+        echo "CONFIG_PACKAGE_ath11k-firmware-ipq6018=n" >> .config
+        echo "CONFIG_PACKAGE_ipq-wifi-zn_m2=n" >> .config
+        echo "CONFIG_PACKAGE_kmod-qca-nss-drv-wifi-meshmgr=n" >> .config
+        
+        echo "=== 脚本修改完成 ==="
+
+    # 7. 强力更新并安装 Feeds（带重试机制）
     - name: Update & Install feeds
       run: |
         cd openwrt_src
@@ -87,7 +116,7 @@ jobs:
         cd openwrt_src
         make defconfig
 
-    # 9. 如果环境检查不幸再次失败，强行拉取真正的标准错误输出
+    # 9. 容错排查：如果环境检查不幸失败，强行拉取真正的标准错误输出
     - name: Inspect Prerequisite Failure Log
       if: failure() && steps.defconfig.outcome == 'failure'
       run: |
@@ -97,8 +126,8 @@ jobs:
         if [ -f "openwrt_src/staging_dir/host/.prereq-build" ]; then
           cat openwrt_src/staging_dir/host/.prereq-build
         else
-          echo "提示：错误依然发生在 feeds 缺失或配置冲突阶段，未能生成环境日志。"
-          echo "请向上滚动屏幕，仔细查看第 7 步 (Update & Install feeds) 和第 8 步的完整报错。"
+          echo "提示：错误依然发生在 feeds 验证或配置解析冲突阶段，未能生成环境日志。"
+          echo "请向上滚动日志，仔细查看第 7 步和第 8 步的完整报错输出。"
         fi
         exit 1
 
