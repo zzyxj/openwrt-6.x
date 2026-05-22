@@ -1,33 +1,54 @@
-name: ZN-M2 Build Competition
+name: ZN-M2 Official Turbo Build
 
 on:
-  workflow_dispatch: # 允许手动点击按钮点火
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # 严格对齐官方要求的稳定环境
     steps:
-    - name: 1. 部署高能编译环境
+    - name: 1. 部署环境
       uses: actions/checkout@v4
 
-    - name: 2. 准备大内功（安装依赖）
+    - name: 2. 安装官方指定编译依赖
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file qemu-utils
 
-    - name: 3. 同步克隆你的相同源码
+    - name: 3. 秒级克隆 LiBwrt 源码
       run: |
-        git clone --depth 1 -b main https://github.com/LiBwrt/openwrt-6.x openwrt
+        git clone --depth 1 --single-branch -b main https://github.com/LiBwrt/openwrt-6.x openwrt
 
-    - name: 4. 喂入一模一样的 .config
+    - name: 4. 喂入你的 .config 配置文件
       run: |
-        # 把刚才上传到根目录的 m2.config 复制并改名到 openwrt 目录下
         cp m2.config openwrt/.config
         cd openwrt
-        # 让系统根据你的选项自动精简并补全依赖
         make defconfig
 
-    - name: 5. 开启云端全速编译
+    - name: 5. 官方安全通道：单线程编译工具链（约10-15分钟）
       run: |
         cd openwrt
+        # 先用单线程把最核心、易报错的 toolchain 编译过关，防止多线程死锁
+        make tools/install -j1 V=s || make tools/install -j1 V=s
+        make toolchain/install -j1 V=s || make toolchain/install -j1 V=s
+
+    - name: 6. 油门踩死：多线程拉满冲刺（约30-40分钟）
+      run: |
+        cd openwrt
+        # 核心工具链过关后，直接释放全核算力，满速轰炸应用层
         make -j$(nproc) V=s
+
+    - name: 7. 榨出兆能 M2 成品固件
+      if: success()
+      run: |
+        mkdir -p firmware_bin
+        find openwrt/bin/targets/ -type f -name "*zn*m2*" -o -name "*sysupgrade*" | xargs -I {} cp {} ./firmware_bin/
+        echo "FIRMWARE_PATH=$PWD/firmware_bin" >> $GITHUB_ENV
+
+    - name: 8. 秒传固件提供下载
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: LiBwrt_ZN_M2_Official_Firmware
+        path: ${{ env.FIRMWARE_PATH }}
+        compression-level: 1
