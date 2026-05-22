@@ -1,7 +1,7 @@
 name: ZN-M2 Build Competition
 
 on:
-  workflow_dispatch: # 允许你手动点击按钮点火
+  workflow_dispatch: # 允许手动点击按钮点火
 
 jobs:
   build:
@@ -18,12 +18,13 @@ jobs:
     - name: 3. 同步克隆你的相同源码
       run: |
         git clone --depth 1 -b main https://github.com/LiBwrt/openwrt-6.x openwrt
-        # 注意：如果你的本地分支不是 main，把上面的 -b main 改成你的本地分支名
 
     - name: 4. 喂入一模一样的 .config
       run: |
-        echo "${{ secrets.MY_DOT_CONFIG }}" > openwrt/.config
+        # 把刚才上传到根目录的 m2.config 复制并改名到 openwrt 目录下
+        cp m2.config openwrt/.config
         cd openwrt
+        # 让系统根据你的选项自动精简并补全依赖
         make defconfig
 
     - name: 5. 开启云端全速编译
